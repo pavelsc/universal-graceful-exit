@@ -1,0 +1,27 @@
+{
+  "name": "universal-graceful-exit",
+  "version": "1.0.0",
+  "description": "Zero-dependency universal lifecycle manager and socket buffer flusher for Node.js",
+  "main": "./index.js",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./index.js"
+    }
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 0"
+  },
+  "keywords": [
+    "graceful",
+    "shutdown",
+    "exit",
+    "socket",
+    "buffer",
+    "amqplib",
+    "redis",
+    "unhandledRejection"
+  ],
+  "author": "Pavel K",
+  "license": "MIT"
+}
