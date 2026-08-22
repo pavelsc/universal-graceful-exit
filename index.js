@@ -6,14 +6,15 @@ const EMERGENCY_STALL_THRESHOLD = 1500;
 const CHECK_PROGRESS_INTERVAL = 100;
 
 const activeSockets = new Set();
-const activeServers = new Set();
+const coreServers = new Set(); // Only native HTTP/TCP servers from diagnostics_channel
+const customServers = new Set(); // Custom servers (WS, SSE и т.д.), переданные руками
 
 diagnostics_channel.channel('net.server.listen').subscribe(({ server }) => {
-  if (!activeServers.has(server)) {
-    activeServers.add(server);
+  if (!coreServers.has(server)) {
+    coreServers.add(server);
 
     server.once('close', () => {
-      activeServers.delete(server);
+      coreServers.delete(server);
     });
   }
 });
@@ -48,6 +49,26 @@ function endTask() {
   return --activeTasksCount;
 }
 
+function trackServer(server) {
+  if (!server || typeof server.close !== 'function') return;
+
+  // Ignore native servers
+  if (coreServers.has(server)) {
+    return;
+  }
+
+  if (!customServers.has(server)) {
+    customServers.add(server);
+
+    const cleanup = () => customServers.delete(server);
+    if (typeof server.once === 'function') {
+      server.once('close', cleanup);
+    } else if (typeof server.on === 'function') {
+      server.on('close', cleanup);
+    }
+  }
+}
+
 /**
  * Universally flushes socket buffers and gracefully exits the process
  * @param {Object} options
@@ -59,23 +80,36 @@ async function gracefulExit(options = { stallThreshold: REGULAR_STALL_THRESHOLD,
   if (shuttingDown && options.exitCode === 0) return;
   shuttingDown = true;
 
-  console.log(`[UniversalExit] Clean shutdown via Diagnostics Channels. Servers: ${activeServers.size}, Sockets: ${activeSockets.size}`);
+  console.log(
+    `[UniversalExit] Clean shutdown initiated. Native Servers: ${coreServers.size}, Custom Servers: ${customServers.size}, Sockets: ${activeSockets.size}`
+  );
 
-  // Automatically close listening ports on all tracked servers
-  for (const server of activeServers) {
+  for (const server of customServers) {
     try {
       server.close();
     } catch (err) {
-      console.error('[UniversalExit] Error closing server:', err);
+      console.error('[UniversalExit] Error closing native server:', err);
     }
   }
+
+  // Automatically close listening ports on all tracked servers
+  for (const server of coreServers) {
+    try {
+      server.close();
+    } catch (err) {
+      console.error('[UniversalExit] Error closing core server:', err);
+    }
+  }
+
+  const now = Date.now();
 
   const lastState = {
     tasks: -1,
     bytes: -1,
-    timestamp: Date.now()
+    started: now,
+    updated: now
   };
-
+  let socketsClosedForcefully = false;
   async function checkProgress() {
     // Current metrics
     const currentBytes = Array.from(activeSockets).reduce((sum, s) => sum + (s.writableLength || 0), 0);
@@ -89,15 +123,32 @@ async function gracefulExit(options = { stallThreshold: REGULAR_STALL_THRESHOLD,
 
     // Checking conditions dynamics
     const progressMade = currentTasks < lastState.tasks || currentBytes !== lastState.bytes;
+    const now = Date.now();
 
     if (progressMade || lastState.tasks === -1) {
       // Update last state
       lastState.tasks = currentTasks;
       lastState.bytes = currentBytes;
-      lastState.timestamp = Date.now();
+      lastState.updated = now;
     } else {
       // No dynamics detected
-      const stalledDuration = Date.now() - lastState.timestamp;
+      const stalledDuration = now - lastState.updated;
+      const totalDuration = now - lastState.started;
+
+      if (totalDuration >= options.stallThreshold / 2 && !socketsClosedForcefully) {
+        socketsClosedForcefully = true;
+        console.warn(`[UniversalExit] WARNING: Shutdown stalled for ${stalledDuration}ms. Active sockets: ${activeSockets.size}. Sending FIN packets.`);
+
+        for (const socket of activeSockets) {
+          try {
+            if (socket && !socket.destroyed) {
+              socket.end();
+            }
+          } catch (err) {
+            console.error('[UniversalExit] Error closing socket:', err);
+          }
+        }
+      }
 
       if (stalledDuration >= options.stallThreshold) {
         console.error(
@@ -143,5 +194,6 @@ if (process.env.NODE_ENV !== 'test') {
 module.exports = {
   isStopped,
   startTask,
-  endTask
+  endTask,
+  trackServer
 };

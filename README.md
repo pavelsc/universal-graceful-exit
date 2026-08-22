@@ -5,7 +5,14 @@ A low-level lifecycle manager for Node.js. Automatically tracks network buffers 
 ## Why do you need this?
 
 You no longer need to call `redis.quit()` or `channel.close()` manually. The package watches system TCP sockets and prevents Node.js from exiting until the internal socket buffer (`writableLength`) becomes 0.
-Always work with any type of servers, like WebSocketServer, no need to call server.close()
+Always work with any type of servers, like WebSocketServer. The only difference is in using `trackServer(wss)` for this type of servers because under the hood WebSocketServer is instance of EventEmitter class.
+
+```javascript
+import { trackServer } from 'universal-graceful-exit';
+
+const wss = new WebSocketServer({ port: config.port });
+trackServer(wss)
+```
 
 ## Installation
 
