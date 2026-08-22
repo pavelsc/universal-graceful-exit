@@ -11,7 +11,7 @@ Always work with any type of servers, like WebSocketServer. The only difference 
 import { trackServer } from 'universal-graceful-exit';
 
 const wss = new WebSocketServer({ port: config.port });
-trackServer(wss)
+trackServer(wss);
 ```
 
 ## Installation

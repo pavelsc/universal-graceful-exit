@@ -110,15 +110,19 @@ async function gracefulExit(options = { stallThreshold: REGULAR_STALL_THRESHOLD,
     updated: now
   };
   let socketsClosedForcefully = false;
+
   async function checkProgress() {
     // Current metrics
     const currentBytes = Array.from(activeSockets).reduce((sum, s) => sum + (s.writableLength || 0), 0);
     const currentTasks = activeTasksCount;
 
     // Conditions to exit
-    if (currentTasks === 0 && currentBytes === 0) {
+    if (currentTasks === 0 && currentBytes === 0 && customServers.size === 0) {
       console.log('[UniversalExit] All buffers and tasks cleared successfully. Exiting cleanly.');
-      process.exit(options.exitCode);
+      setImmediate(() => {
+        process.exit(options.exitCode);
+      });
+      return;
     }
 
     // Checking conditions dynamics
