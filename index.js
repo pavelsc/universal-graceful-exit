@@ -4,10 +4,12 @@ const { setTimeout } = require('node:timers/promises');
 const REGULAR_STALL_THRESHOLD = 3000;
 const EMERGENCY_STALL_THRESHOLD = 1500;
 const CHECK_PROGRESS_INTERVAL = 100;
+const CLOSING_METHODS = ['quit', 'close', 'end', 'disconnect'];
 
 const activeSockets = new Set();
 const coreServers = new Set(); // Only native HTTP/TCP servers from diagnostics_channel
 const customServers = new Set(); // Custom servers (WS, SSE и т.д.), переданные руками
+const clients = new Map();
 
 diagnostics_channel.channel('net.server.listen').subscribe(({ server }) => {
   if (!coreServers.has(server)) {
@@ -25,6 +27,11 @@ diagnostics_channel.channel('net.client.socket').subscribe(({ socket }) => {
 
     socket.once('close', () => {
       activeSockets.delete(socket);
+      console.log(`[UniversalExit] Socket natively CLOSED. Left in set: ${activeSockets.size}`);
+    });
+
+    socket.on('error', err => {
+      console.log(`[UniversalExit] Socket encountered error: ${err.message}`);
     });
   }
 });
@@ -49,6 +56,10 @@ function endTask() {
   return --activeTasksCount;
 }
 
+function resolveClosingMethod(client) {
+  return CLOSING_METHODS.find(method => typeof client[method] === 'function');
+}
+
 function trackServer(server) {
   if (!server || typeof server.close !== 'function') return;
 
@@ -57,14 +68,67 @@ function trackServer(server) {
     return;
   }
 
-  if (!customServers.has(server)) {
-    customServers.add(server);
+  if (customServers.has(server)) {
+    return;
+  }
 
-    const cleanup = () => customServers.delete(server);
-    if (typeof server.once === 'function') {
-      server.once('close', cleanup);
-    } else if (typeof server.on === 'function') {
-      server.on('close', cleanup);
+  customServers.add(server);
+
+  const cleanup = () => {
+    console.log('[UniversalExit] Custom server close event');
+    customServers.delete(server);
+  };
+  if (typeof server.once === 'function') {
+    server.once('close', cleanup);
+  } else if (typeof server.on === 'function') {
+    server.on('close', cleanup);
+  }
+}
+
+function trackClient(client) {
+  if (!client || clients.has(client)) return;
+
+  const method = resolveClosingMethod(client);
+  if (!method) return;
+
+  console.log(`[UniversalExit] Adding client with method ${method}`);
+  clients.set(client, method);
+}
+
+function closeCustomServers() {
+  for (const server of customServers) {
+    try {
+      if (server.clients) {
+        for (const client of server.clients) {
+          client.terminate();
+        }
+      }
+      server.close();
+    } catch (err) {
+      console.error('[UniversalExit] Error closing custom server:', err);
+    }
+  }
+}
+
+function closeCoreServers() {
+  for (const server of coreServers) {
+    try {
+      server.close();
+    } catch (err) {
+      console.error('[UniversalExit] Error closing native server:', err);
+    }
+  }
+}
+
+function closeClients() {
+  for (const [client, method] of clients) {
+    try {
+      console.log(`[UniversalExit] Closing client via ${method}...`);
+      client[method]();
+    } catch (err) {
+      console.error(`[UniversalExit] Error closing client via ${method}:`, err);
+    } finally {
+      clients.delete(client);
     }
   }
 }
@@ -84,84 +148,67 @@ async function gracefulExit(options = { stallThreshold: REGULAR_STALL_THRESHOLD,
     `[UniversalExit] Clean shutdown initiated. Native Servers: ${coreServers.size}, Custom Servers: ${customServers.size}, Sockets: ${activeSockets.size}`
   );
 
-  for (const server of customServers) {
-    try {
-      server.close();
-    } catch (err) {
-      console.error('[UniversalExit] Error closing native server:', err);
-    }
-  }
-
-  // Automatically close listening ports on all tracked servers
-  for (const server of coreServers) {
-    try {
-      server.close();
-    } catch (err) {
-      console.error('[UniversalExit] Error closing core server:', err);
-    }
-  }
+  closeCustomServers();
+  closeCoreServers();
 
   const now = Date.now();
 
   const lastState = {
     tasks: -1,
     bytes: -1,
+    servers: -1,
+    clients: -1,
+    sockets: -1,
     started: now,
     updated: now
   };
-  let socketsClosedForcefully = false;
 
   async function checkProgress() {
-    // Current metrics
     const currentBytes = Array.from(activeSockets).reduce((sum, s) => sum + (s.writableLength || 0), 0);
     const currentTasks = activeTasksCount;
 
-    // Conditions to exit
-    if (currentTasks === 0 && currentBytes === 0 && customServers.size === 0) {
-      console.log('[UniversalExit] All buffers and tasks cleared successfully. Exiting cleanly.');
-      setImmediate(() => {
-        process.exit(options.exitCode);
-      });
+    console.log(`[UniversalExit] currentTasks: ${currentTasks}, currentBytes: ${currentBytes}, customServers: ${customServers.size}, clients: ${clients.size}`);
+    if (currentTasks === 0) {
+      closeClients();
+    }
+
+    if (currentTasks === 0 && currentBytes === 0 && customServers.size === 0 && clients.size === 0) {
+      console.log('[UniversalExit] All buffers, tasks, servers and clients cleared successfully. Exiting cleanly.');
+      setImmediate(process.exit, options.exitCode);
       return;
     }
 
-    // Checking conditions dynamics
-    const progressMade = currentTasks < lastState.tasks || currentBytes !== lastState.bytes;
+    const progressMade =
+      currentTasks < lastState.tasks ||
+      currentBytes !== lastState.bytes ||
+      customServers.size < lastState.servers ||
+      clients.size < lastState.clients ||
+      activeSockets.size < lastState.sockets;
     const now = Date.now();
 
     if (progressMade || lastState.tasks === -1) {
-      // Update last state
       lastState.tasks = currentTasks;
       lastState.bytes = currentBytes;
+      lastState.servers = customServers.size;
+      lastState.clients = clients.size;
+      lastState.sockets = activeSockets.size;
       lastState.updated = now;
     } else {
-      // No dynamics detected
       const stalledDuration = now - lastState.updated;
-      const totalDuration = now - lastState.started;
-
-      if (totalDuration >= options.stallThreshold / 2 && !socketsClosedForcefully) {
-        socketsClosedForcefully = true;
-        console.warn(`[UniversalExit] WARNING: Shutdown stalled for ${stalledDuration}ms. Active sockets: ${activeSockets.size}. Sending FIN packets.`);
-
-        for (const socket of activeSockets) {
-          try {
-            if (socket && !socket.destroyed) {
-              socket.end();
-            }
-          } catch (err) {
-            console.error('[UniversalExit] Error closing socket:', err);
-          }
-        }
-      }
 
       if (stalledDuration >= options.stallThreshold) {
         console.error(
           `[UniversalExit] EMERGENCY: No progress detected for ${options.stallThreshold}ms (Tasks: ${currentTasks}, Pending Bytes: ${currentBytes}). Forcing exit.`
         );
-        process.exit(1);
+        closeClients();
+        setImmediate(process.exit, 1);
+        return;
       }
     }
 
+    console.log(
+      `[UniversalExit] Scheduling next check #${Math.round((now - lastState.started) / CHECK_PROGRESS_INTERVAL)}. Sockets left: ${activeSockets.size}`
+    );
     await setTimeout(CHECK_PROGRESS_INTERVAL);
     return checkProgress();
   }
@@ -173,7 +220,21 @@ async function gracefulExit(options = { stallThreshold: REGULAR_STALL_THRESHOLD,
 if (process.env.NODE_ENV !== 'test') {
   const signals = ['SIGTERM', 'SIGINT', 'SIGHUP', 'SIGQUIT'];
   for (const signal of signals) {
-    process.on(signal, () => gracefulExit({ stallThreshold: REGULAR_STALL_THRESHOLD, exitCode: 0 }));
+    /**
+     * The first SIGINT starts gracefulExit. Then Node removes the listener.
+     * That is the problem. With zero SIGINT listeners, Node’s default is: SIGINT means die. Now.
+     * You always get a second SIGINT (~100ms later from PM2 → npm → node).
+     * First one is yours. Second one hits a process with no handler left, so Node kills it immediately.
+     * on plus if (shuttingDown) return keeps a listener installed. The second SIGINT is swallowed.
+     * Node still thinks someone is handling SIGINT, so it does not restore the default kill. Your drain can finish.
+     * Same rule for SIGTERM / SIGHUP / SIGQUIT.
+     * once is fine only if you will never get that signal twice. Under Docker/PM2/npm you will.
+     */
+    process.on(signal, () => {
+      if (shuttingDown) return;
+      console.log(`[UniversalExit] Received OS signal: ${signal}`);
+      gracefulExit({ stallThreshold: REGULAR_STALL_THRESHOLD, exitCode: 0 });
+    });
   }
 
   // Intercept unhandled exceptions and crashes
@@ -199,5 +260,6 @@ module.exports = {
   isStopped,
   startTask,
   endTask,
-  trackServer
+  trackServer,
+  trackClient
 };
