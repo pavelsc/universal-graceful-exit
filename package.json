@@ -1,6 +1,10 @@
 {
   "name": "universal-graceful-exit",
   "version": "1.1.5",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com"
+  },
   "description": "Zero-dependency universal lifecycle manager and socket buffer flusher for Node.js",
   "main": "./index.js",
   "types": "./index.d.ts",
