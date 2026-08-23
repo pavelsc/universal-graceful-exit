@@ -1,0 +1,22 @@
+# https://docs.socket.dev/docs/socket-yml
+version: 2
+
+projectIgnorePaths:
+  - 'CONTRIBUTORS.md'
+  - 'CONTRIBUTING.md'
+  - 'README.md'
+  - 'LICENSE'
+  - 'CHANGELOG.md'
+  - 'docs'
+  - 'tests'
+  - '.github'
+  - '.vscode'
+  - '.idea'
+
+triggerPaths:
+  - 'package.json'
+  - 'package-lock.json'
+
+issueRules:
+  envVars: false
+  debugAccess: false

@@ -1,7 +1,12 @@
-[![CI](https://github.com/pavelsc/universal-graceful-exit/actions/workflows/test.yml/badge.svg)](https://github.com/pavelsc/universal-graceful-exit/actions/workflows/test.yml)
-[![Socket Badge](https://badge.socket.dev/npm/package/universal-graceful-exit)](https://socket.dev/npm/package/universal-graceful-exit)
-
 # universal-graceful-exit
+
+[![npm version](https://img.shields.io/npm/v/universal-graceful-exit?logo=npm)](https://www.npmjs.com/package/universal-graceful-exit)
+[![bundle size](https://img.shields.io/bundlephobia/minzip/universal-graceful-exit)](https://bundlephobia.com/package/universal-graceful-exit)
+[![Socket Badge](https://badge.socket.dev/npm/package/universal-graceful-exit)](https://socket.dev/npm/package/universal-graceful-exit)
+[![tests](https://img.shields.io/github/actions/workflow/status/pavelsc/universal-graceful-exit/test.yml?branch=master&label=tests&logo=github)](https://github.com/pavelsc/universal-graceful-exit/actions/workflows/test.yml)
+[![npm downloads](https://img.shields.io/npm/dm/universal-graceful-exit)](https://www.npmjs.com/package/universal-graceful-exit)
+[![types](https://img.shields.io/npm/types/universal-graceful-exit)](https://www.typescriptlang.org/)
+[![license](https://img.shields.io/npm/l/universal-graceful-exit)](https://github.com/pavelsc/universal-graceful-exit/blob/master/LICENSE)
 
 A low-level lifecycle manager for Node.js. Automatically tracks network buffers and guarantees that data sent in fire-and-forget mode (to Redis, RabbitMQ, Postgres, etc.) is not lost when the application exits or on critical errors.
 

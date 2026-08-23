@@ -8,8 +8,8 @@ const CLOSING_METHODS = ['quit', 'close', 'end', 'disconnect'];
 
 const activeSockets = new Set();
 const coreServers = new Set(); // Only native HTTP/TCP servers from diagnostics_channel
-const customServers = new Set(); // Custom servers (WS, SSE и т.д.), переданные руками
-const clients = new Map();
+const customServers = new Set(); // Custom servers (WS, SSE etc), mostly EventEmitter instances
+const clients = new Map(); // Regular clients like ioredis or custom wrappers, guarded via TrackableClient
 
 diagnostics_channel.channel('net.server.listen').subscribe(({ server }) => {
   if (!coreServers.has(server)) {

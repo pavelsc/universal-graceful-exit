@@ -1,7 +1,22 @@
+/**
+ * Returns whether a graceful shutdown is already in progress.
+ * Use this to stop accepting new work (consumers, HTTP handlers, loops).
+ * @returns `true` after the first SIGINT / SIGTERM / `gracefulExit` event.
+ */
 export function isStopped(): boolean;
 
+/**
+ * Marks an in-flight unit of work so shutdown will not close clients yet.
+ * Pair every call with {@link endTask} when the work finishes (success or error).
+ * @returns The updated count of active tasks.
+ */
 export function startTask(): number;
 
+/**
+ * Marks an in-flight unit of work as finished.
+ * When the count reaches 0, shutdown proceeds to close tracked clients.
+ * @returns The updated count of active tasks.
+ */
 export function endTask(): number;
 
 export interface CustomServer {
