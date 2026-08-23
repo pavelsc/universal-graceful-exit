@@ -31,6 +31,23 @@ trackClient(redis);
 trackClient(amqpConnection);
 ```
 
+Call `untrackClient` when **you** close or replace a tracked client. The library keeps a reference to every tracked client until shutdown; if you reconnect for weeks without untracking, those already-closed objects stay in memory. A second `quit` / `close` on shutdown is usually harmless; the leak is not.
+
+```javascript
+import { trackClient, untrackClient } from 'universal-graceful-exit';
+
+async function reconnectRedis() {
+  if (redis) {
+    await redis.quit();
+    untrackClient(redis);
+  }
+  redis = new Redis(config.redisUrl);
+  trackClient(redis);
+}
+```
+
+The same pattern applies to a pool or request-scoped client you drain yourself (`pool.end()`, `channel.close()`, ...): close it, then `untrackClient` so this library drops its reference.
+
 ## Installation
 
 ```bash

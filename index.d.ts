@@ -41,6 +41,16 @@ export type TrackableClient = { quit: Function } | { close: Function } | { end: 
  */
 export function trackClient(client: TrackableClient): void;
 
+/**
+ * Removes an outbound client previously registered with {@link trackClient}.
+ * Required when you close or replace the client yourself: the library retains
+ * a reference until untrack or process exit, so a reconnect loop would otherwise
+ * leak closed clients for the lifetime of the process. A second `quit` / `close`
+ * / `end` / `disconnect` on shutdown is usually harmless; the retained reference
+ * is not. No-op if the client was never tracked.
+ */
+export function untrackClient(client: TrackableClient): void;
+
 declare global {
   namespace NodeJS {
     interface Process {

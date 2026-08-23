@@ -1,5 +1,5 @@
 const diagnostics_channel = require('node:diagnostics_channel');
-const { setTimeout } = require('node:timers/promises');
+const { setImmediate, setTimeout } = require('node:timers/promises');
 
 const REGULAR_STALL_THRESHOLD = 3000;
 const EMERGENCY_STALL_THRESHOLD = 1500;
@@ -40,6 +40,8 @@ diagnostics_channel.channel('net.client.socket').subscribe(({ socket }) => {
 let shuttingDown = false;
 let activeTasksCount = 0;
 
+const getCurrentBytes = () => Array.from(activeSockets).reduce((sum, s) => sum + (s.writableLength || 0), 0);
+
 /**
  * Returns true if the process is currently shutting down
  * @returns {boolean}
@@ -54,10 +56,6 @@ function startTask() {
 
 function endTask() {
   return --activeTasksCount;
-}
-
-function resolveClosingMethod(client) {
-  return CLOSING_METHODS.find(method => typeof client[method] === 'function');
 }
 
 function trackServer(server) {
@@ -85,6 +83,10 @@ function trackServer(server) {
   }
 }
 
+function resolveClosingMethod(client) {
+  return CLOSING_METHODS.find(method => typeof client[method] === 'function');
+}
+
 function trackClient(client) {
   if (!client || clients.has(client)) return;
 
@@ -93,6 +95,12 @@ function trackClient(client) {
 
   console.log(`[UniversalExit] Adding client with method ${method}`);
   clients.set(client, method);
+}
+
+function untrackClient(client) {
+  if (!client || !clients.has(client)) return;
+  console.log(`[UniversalExit] Removing client manually`);
+  clients.delete(client);
 }
 
 function closeCustomServers() {
@@ -163,8 +171,9 @@ async function gracefulExit(options = { stallThreshold: REGULAR_STALL_THRESHOLD,
     updated: now
   };
 
-  async function checkProgress() {
-    const currentBytes = Array.from(activeSockets).reduce((sum, s) => sum + (s.writableLength || 0), 0);
+  // noinspection InfiniteLoopJS
+  while (true) {
+    const currentBytes = getCurrentBytes();
     const currentTasks = activeTasksCount;
 
     console.log(`[UniversalExit] currentTasks: ${currentTasks}, currentBytes: ${currentBytes}, customServers: ${customServers.size}, clients: ${clients.size}`);
@@ -174,8 +183,8 @@ async function gracefulExit(options = { stallThreshold: REGULAR_STALL_THRESHOLD,
 
     if (currentTasks === 0 && currentBytes === 0 && customServers.size === 0 && clients.size === 0) {
       console.log('[UniversalExit] All buffers, tasks, servers and clients cleared successfully. Exiting cleanly.');
-      setImmediate(process.exit, options.exitCode);
-      return;
+      await setImmediate();
+      process.exit(options.exitCode);
     }
 
     const progressMade =
@@ -201,8 +210,8 @@ async function gracefulExit(options = { stallThreshold: REGULAR_STALL_THRESHOLD,
           `[UniversalExit] EMERGENCY: No progress detected for ${options.stallThreshold}ms (Tasks: ${currentTasks}, Pending Bytes: ${currentBytes}). Forcing exit.`
         );
         closeClients();
-        setImmediate(process.exit, 1);
-        return;
+        await setImmediate();
+        process.exit(1);
       }
     }
 
@@ -210,10 +219,7 @@ async function gracefulExit(options = { stallThreshold: REGULAR_STALL_THRESHOLD,
       `[UniversalExit] Scheduling next check #${Math.round((now - lastState.started) / CHECK_PROGRESS_INTERVAL)}. Sockets left: ${activeSockets.size}`
     );
     await setTimeout(CHECK_PROGRESS_INTERVAL);
-    return checkProgress();
   }
-
-  await checkProgress();
 }
 
 // Automatically intercept OS termination signals (Docker, K8s, PM2, Ctrl+C)
@@ -261,5 +267,6 @@ module.exports = {
   startTask,
   endTask,
   trackServer,
-  trackClient
+  trackClient,
+  untrackClient
 };
