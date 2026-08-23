@@ -33,5 +33,11 @@ export default [
       sourceType: 'module',
       globals: globals.node
     }
+  },
+  {
+    files: ['**/*.test.js'],
+    languageOptions: {
+      globals: globals.jest
+    }
   }
 ];

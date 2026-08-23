@@ -227,7 +227,7 @@ if (process.env.NODE_ENV !== 'test') {
      * First one is yours. Second one hits a process with no handler left, so Node kills it immediately.
      * on plus if (shuttingDown) return keeps a listener installed. The second SIGINT is swallowed.
      * Node still thinks someone is handling SIGINT, so it does not restore the default kill. Your drain can finish.
-     * Same rule for SIGTERM / SIGHUP / SIGQUIT / SIGUSR2.
+     * Same rule for SIGTERM / SIGHUP / SIGQUIT.
      * once is fine only if you will never get that signal twice. Under Docker/PM2/npm you will.
      */
     process.on(signal, () => {

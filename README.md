@@ -1,3 +1,6 @@
+[![CI](https://github.com/pavelsc/universal-graceful-exit/actions/workflows/test.yml/badge.svg)](https://github.com/pavelsc/universal-graceful-exit/actions/workflows/test.yml)
+[![Socket Badge](https://badge.socket.dev/npm/package/universal-graceful-exit)](https://socket.dev/npm/package/universal-graceful-exit)
+
 # universal-graceful-exit
 
 A low-level lifecycle manager for Node.js. Automatically tracks network buffers and guarantees that data sent in fire-and-forget mode (to Redis, RabbitMQ, Postgres, etc.) is not lost when the application exits or on critical errors.
@@ -85,4 +88,29 @@ import 'universal-graceful-exit';
 
 // Trigger a safe, buffered exit with a custom exit code (e.g., 5)
 process.emit('gracefulExit', 5);
+```
+
+## Proof of Concept
+
+Log example of usage with `ws` and `ioredis` libraries
+
+```log
+[UniversalExit] Received OS signal: SIGINT
+[UniversalExit] Clean shutdown initiated. Native Servers: 0, Custom Servers: 1, Sockets: 4
+[UniversalExit] currentTasks: 0, currentBytes: 0, customServers: 1, clients: 4
+[UniversalExit] Closing client via quit...
+[UniversalExit] Closing client via quit...
+[UniversalExit] Closing client via quit...
+[UniversalExit] Closing client via quit...
+[UniversalExit] Scheduling next check #0. Sockets left: 4
+[UniversalExit] Custom server close event
+[WARN] EventServer - Websocket Server closed
+[DEBUG] EventServer - Websocket Client Connection Close.
+[UniversalExit] Socket natively CLOSED. Left in set: 3
+[UniversalExit] Socket natively CLOSED. Left in set: 2
+[UniversalExit] Socket natively CLOSED. Left in set: 1
+[UniversalExit] Socket natively CLOSED. Left in set: 0
+[UniversalExit] currentTasks: 0, currentBytes: 0, customServers: 0, clients: 0
+[UniversalExit] All buffers, tasks, servers and clients cleared successfully. Exiting cleanly.
+[DEBUG] App - Shut down complete!
 ```
