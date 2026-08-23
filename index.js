@@ -218,7 +218,7 @@ async function gracefulExit(options = { stallThreshold: REGULAR_STALL_THRESHOLD,
 
 // Automatically intercept OS termination signals (Docker, K8s, PM2, Ctrl+C)
 if (process.env.NODE_ENV !== 'test') {
-  const signals = ['SIGTERM', 'SIGINT', 'SIGHUP', 'SIGQUIT'];
+  const signals = ['SIGTERM', 'SIGINT', 'SIGHUP', 'SIGQUIT', 'SIGUSR2'];
   for (const signal of signals) {
     /**
      * The first SIGINT starts gracefulExit. Then Node removes the listener.
@@ -227,7 +227,7 @@ if (process.env.NODE_ENV !== 'test') {
      * First one is yours. Second one hits a process with no handler left, so Node kills it immediately.
      * on plus if (shuttingDown) return keeps a listener installed. The second SIGINT is swallowed.
      * Node still thinks someone is handling SIGINT, so it does not restore the default kill. Your drain can finish.
-     * Same rule for SIGTERM / SIGHUP / SIGQUIT.
+     * Same rule for SIGTERM / SIGHUP / SIGQUIT / SIGUSR2.
      * once is fine only if you will never get that signal twice. Under Docker/PM2/npm you will.
      */
     process.on(signal, () => {
