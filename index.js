@@ -7,17 +7,17 @@ const CHECK_PROGRESS_INTERVAL = 100;
 const CLOSING_METHODS = ['quit', 'close', 'end', 'disconnect'];
 
 const activeSockets = new Set();
-const coreServers = new Set(); // Native HTTP/TCP servers via tracing:net.server.listen
+const nativeServers = new Set(); // Native HTTP/TCP servers via tracing:net.server.listen
 const customServers = new Set(); // Custom servers (WS, SSE etc), mostly EventEmitter instances
 const clients = new Map(); // Regular clients like ioredis or custom wrappers, guarded via TrackableClient
 
 diagnostics_channel.tracingChannel('net.server.listen').subscribe({
   asyncEnd({ server }) {
-    if (coreServers.has(server)) return;
-    coreServers.add(server);
+    if (nativeServers.has(server)) return;
+    nativeServers.add(server);
     server.once('close', () => {
       console.log('[UniversalExit] Native server close event');
-      coreServers.delete(server);
+      nativeServers.delete(server);
     });
   }
 });
@@ -28,7 +28,7 @@ diagnostics_channel.channel('net.client.socket').subscribe(({ socket }) => {
 
     socket.once('close', () => {
       activeSockets.delete(socket);
-      console.log(`[UniversalExit] Socket natively CLOSED. Left in set: ${activeSockets.size}`);
+      console.log(`[UniversalExit] Socket CLOSED. Left in set: ${activeSockets.size}`);
     });
 
     socket.on('error', err => {
@@ -63,7 +63,7 @@ function trackServer(server) {
   if (!server || typeof server.close !== 'function') return;
 
   // Ignore native servers
-  if (coreServers.has(server)) {
+  if (nativeServers.has(server)) {
     return;
   }
 
@@ -120,8 +120,8 @@ function closeCustomServers() {
   }
 }
 
-function closeCoreServers() {
-  for (const server of coreServers) {
+function closeNativeServers() {
+  for (const server of nativeServers) {
     try {
       server.close();
     } catch (err) {
@@ -155,18 +155,19 @@ async function gracefulExit(options = { stallThreshold: REGULAR_STALL_THRESHOLD,
   shuttingDown = true;
 
   console.log(
-    `[UniversalExit] Clean shutdown initiated. Custom Servers: ${customServers.size}, Native Servers: ${coreServers.size}, Sockets: ${activeSockets.size}`
+    `[UniversalExit] Clean shutdown initiated. Custom Servers: ${customServers.size}, Native Servers: ${nativeServers.size}, Sockets: ${activeSockets.size}`
   );
 
   closeCustomServers();
-  closeCoreServers();
+  closeNativeServers();
 
   const now = Date.now();
 
   const lastState = {
     tasks: -1,
     bytes: -1,
-    servers: -1,
+    customServers: -1,
+    nativeServers: -1,
     clients: -1,
     sockets: -1,
     started: now,
@@ -178,12 +179,14 @@ async function gracefulExit(options = { stallThreshold: REGULAR_STALL_THRESHOLD,
     const currentBytes = getCurrentBytes();
     const currentTasks = activeTasksCount;
 
-    console.log(`[UniversalExit] currentTasks: ${currentTasks}, currentBytes: ${currentBytes}, customServers: ${customServers.size}, clients: ${clients.size}`);
+    console.log(
+      `[UniversalExit] currentTasks: ${currentTasks}, currentBytes: ${currentBytes}, customServers: ${customServers.size}, nativeServers: ${nativeServers.size}, clients: ${clients.size}`
+    );
     if (currentTasks === 0) {
       closeClients();
     }
 
-    if (currentTasks === 0 && currentBytes === 0 && customServers.size === 0 && clients.size === 0) {
+    if (currentTasks === 0 && currentBytes === 0 && customServers.size === 0 && nativeServers.size === 0 && clients.size === 0) {
       console.log('[UniversalExit] All buffers, tasks, servers and clients cleared successfully. Exiting cleanly.');
       await setImmediate();
       process.exit(options.exitCode);
@@ -192,7 +195,8 @@ async function gracefulExit(options = { stallThreshold: REGULAR_STALL_THRESHOLD,
     const progressMade =
       currentTasks < lastState.tasks ||
       currentBytes !== lastState.bytes ||
-      customServers.size < lastState.servers ||
+      customServers.size < lastState.customServers ||
+      nativeServers.size < lastState.nativeServers ||
       clients.size < lastState.clients ||
       activeSockets.size < lastState.sockets;
     const now = Date.now();
@@ -200,7 +204,8 @@ async function gracefulExit(options = { stallThreshold: REGULAR_STALL_THRESHOLD,
     if (progressMade || lastState.tasks === -1) {
       lastState.tasks = currentTasks;
       lastState.bytes = currentBytes;
-      lastState.servers = customServers.size;
+      lastState.customServers = customServers.size;
+      lastState.nativeServers = nativeServers.size;
       lastState.clients = clients.size;
       lastState.sockets = activeSockets.size;
       lastState.updated = now;
