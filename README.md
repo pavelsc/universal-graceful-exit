@@ -118,16 +118,18 @@ Log example of usage with `ws` and `ioredis` libraries
 
 ```log
 [UniversalExit] Received OS signal: SIGINT
-[UniversalExit] Clean shutdown initiated. Native Servers: 0, Custom Servers: 1, Sockets: 4
+[UniversalExit] Clean shutdown initiated. Custom Servers: 1, Native Servers: 1, Sockets: 4
+[UniversalExit] Custom server clients: 1
 [UniversalExit] currentTasks: 0, currentBytes: 0, customServers: 1, clients: 4
 [UniversalExit] Closing client via quit...
 [UniversalExit] Closing client via quit...
 [UniversalExit] Closing client via quit...
 [UniversalExit] Closing client via quit...
 [UniversalExit] Scheduling next check #0. Sockets left: 4
+[UniversalExit] Native server close event
 [UniversalExit] Custom server close event
 [WARN] EventServer - Websocket Server closed
-[DEBUG] EventServer - Websocket Client Connection Close.
+[DEBUG] EventServer - Websocket Connection Close.
 [UniversalExit] Socket natively CLOSED. Left in set: 3
 [UniversalExit] Socket natively CLOSED. Left in set: 2
 [UniversalExit] Socket natively CLOSED. Left in set: 1

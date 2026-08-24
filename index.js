@@ -16,6 +16,7 @@ diagnostics_channel.tracingChannel('net.server.listen').subscribe({
     if (coreServers.has(server)) return;
     coreServers.add(server);
     server.once('close', () => {
+      console.log('[UniversalExit] Native server close event');
       coreServers.delete(server);
     });
   }
@@ -107,6 +108,7 @@ function closeCustomServers() {
   for (const server of customServers) {
     try {
       if (server.clients) {
+        console.log('[UniversalExit] Custom server clients:', server.clients.size);
         for (const client of server.clients) {
           client.terminate();
         }
@@ -153,7 +155,7 @@ async function gracefulExit(options = { stallThreshold: REGULAR_STALL_THRESHOLD,
   shuttingDown = true;
 
   console.log(
-    `[UniversalExit] Clean shutdown initiated. Native Servers: ${coreServers.size}, Custom Servers: ${customServers.size}, Sockets: ${activeSockets.size}`
+    `[UniversalExit] Clean shutdown initiated. Custom Servers: ${customServers.size}, Native Servers: ${coreServers.size}, Sockets: ${activeSockets.size}`
   );
 
   closeCustomServers();
