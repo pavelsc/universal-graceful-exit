@@ -15,18 +15,17 @@
  *   NODE_ENV=production so the production SIGINT path is exercised.
  *
  * Lifecycle:
- *   1. Import the library (side effects register SIGINT, SIGTERM, ...).
- *   2. Bind a native HTTP server — diagnostics_channel tracks it automatically
+ *   1. Import the library first (signal hooks + tracing:net.server.listen).
+ *   2. Bind a native HTTP server — asyncEnd adds it to coreServers
  *      and the listening handle keeps the event loop alive (no setInterval).
  *   3. Register a mock outbound client via trackClient().
  *   4. Idle until SIGINT (or a Windows IPC stand-in) starts gracefulExit().
  */
 
-const http = require('node:http');
-
-// Import as the very first application module, matching the documented usage.
-// trackClient is the public registration API; signal hooks are side effects.
+// Documented usage: first require so the tracing subscriber is in place
+// before listen() publishes tracing:net.server.listen.
 const { trackClient } = require('../../index.js');
+const http = require('node:http');
 
 /**
  * Stand-in for an outbound I/O client (ioredis, amqplib, pg, ...).

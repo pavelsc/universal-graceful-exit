@@ -244,8 +244,9 @@ describe('graceful shutdown via child process', () => {
 
     const output = `${stdout}${stderr}`;
 
-    // 1. Library acknowledged the start of a clean drain.
+    // 1. Library acknowledged the start of a clean drain and saw the HTTP server.
     expect(output).toContain('[UniversalExit] Clean shutdown initiated.');
+    expect(output).toMatch(/Native Servers: [1-9]\d*/);
 
     // 2. Drain finished; this is the last line the library prints before exit.
     expect(output).toContain('Exiting cleanly.');

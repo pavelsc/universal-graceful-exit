@@ -7,14 +7,14 @@ const CHECK_PROGRESS_INTERVAL = 100;
 const CLOSING_METHODS = ['quit', 'close', 'end', 'disconnect'];
 
 const activeSockets = new Set();
-const coreServers = new Set(); // Only native HTTP/TCP servers from diagnostics_channel
+const coreServers = new Set(); // Native HTTP/TCP servers via tracing:net.server.listen
 const customServers = new Set(); // Custom servers (WS, SSE etc), mostly EventEmitter instances
 const clients = new Map(); // Regular clients like ioredis or custom wrappers, guarded via TrackableClient
 
-diagnostics_channel.channel('net.server.listen').subscribe(({ server }) => {
-  if (!coreServers.has(server)) {
+diagnostics_channel.tracingChannel('net.server.listen').subscribe({
+  asyncEnd({ server }) {
+    if (coreServers.has(server)) return;
     coreServers.add(server);
-
     server.once('close', () => {
       coreServers.delete(server);
     });
