@@ -86,7 +86,7 @@ async function startConsuming(rabbitConn) {
       startTask();
       const result = await processEvent(msg.content);
       if (msg.properties.replyTo) {
-        rabbitChannel.sendToQueue(msg.properties.replyTo, Buffer.from(response), {
+        rabbitChannel.sendToQueue(msg.properties.replyTo, Buffer.from(result), {
           correlationId: msg.properties.correlationId
         });
       }
@@ -129,7 +129,7 @@ Log example of usage with `ws` and `ioredis` libraries
 [UniversalExit] Native server close event
 [UniversalExit] Custom server close event
 [WARN] EventServer - Websocket Server closed
-[DEBUG] EventServer - Websocket Connection Close.
+[DEBUG] EventServer - Websocket Client Connection closed
 [UniversalExit] Socket natively CLOSED. Left in set: 3
 [UniversalExit] Socket natively CLOSED. Left in set: 2
 [UniversalExit] Socket natively CLOSED. Left in set: 1

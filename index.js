@@ -4,12 +4,22 @@ const { setImmediate, setTimeout } = require('node:timers/promises');
 const REGULAR_STALL_THRESHOLD = 3000;
 const EMERGENCY_STALL_THRESHOLD = 1500;
 const CHECK_PROGRESS_INTERVAL = 100;
-const CLOSING_METHODS = ['quit', 'close', 'end', 'disconnect'];
 
 const activeSockets = new Set();
 const nativeServers = new Set(); // Native HTTP/TCP servers via tracing:net.server.listen
 const customServers = new Set(); // Custom servers (WS, SSE etc), mostly EventEmitter instances
-const clients = new Map(); // Regular clients like ioredis or custom wrappers, guarded via TrackableClient
+class Clients extends Map {
+  closing = false;
+}
+/**
+ * Regular clients like ioredis or custom wrappers, guarded via TrackableClient
+ * @type {Clients<object, string>}
+ */
+const clients = new Clients();
+
+const CLOSING_METHODS = ['quit', 'close', 'end', 'disconnect'];
+const resolveClosingMethod = client => CLOSING_METHODS.find(method => typeof client[method] === 'function');
+const getCurrentBytes = () => Array.from(activeSockets).reduce((sum, s) => sum + (s.writableLength || 0), 0);
 
 diagnostics_channel.tracingChannel('net.server.listen').subscribe({
   asyncEnd({ server }) {
@@ -40,8 +50,6 @@ diagnostics_channel.channel('net.client.socket').subscribe(({ socket }) => {
 // Internal application lifecycle state
 let shuttingDown = false;
 let activeTasksCount = 0;
-
-const getCurrentBytes = () => Array.from(activeSockets).reduce((sum, s) => sum + (s.writableLength || 0), 0);
 
 /**
  * Returns true if the process is currently shutting down
@@ -84,15 +92,16 @@ function trackServer(server) {
   }
 }
 
-function resolveClosingMethod(client) {
-  return CLOSING_METHODS.find(method => typeof client[method] === 'function');
-}
-
 function trackClient(client) {
   if (!client || clients.has(client)) return;
 
   const method = resolveClosingMethod(client);
   if (!method) return;
+
+  if (clients.closing) {
+    void closeClient(client, method);
+    return;
+  }
 
   console.log(`[UniversalExit] Adding client with method ${method}`);
   clients.set(client, method);
@@ -131,15 +140,24 @@ function closeNativeServers() {
 }
 
 function closeClients() {
-  for (const [client, method] of clients) {
-    try {
-      console.log(`[UniversalExit] Closing client via ${method}...`);
-      client[method]();
-    } catch (err) {
-      console.error(`[UniversalExit] Error closing client via ${method}:`, err);
-    } finally {
+  if (clients.closing) {
+    return;
+  }
+  clients.closing = true;
+  Promise.all(
+    Array.from(clients).map(async ([client, method]) => {
+      await closeClient(client, method);
       clients.delete(client);
-    }
+    })
+  ).finally(() => console.log('[UniversalExit] Client close attempts finished'));
+}
+
+async function closeClient(client, method) {
+  try {
+    console.log(`[UniversalExit] Closing client via ${method}...`);
+    await client[method]();
+  } catch (err) {
+    console.error(`[UniversalExit] Error closing client via ${method}:`, err);
   }
 }
 
@@ -161,7 +179,7 @@ async function gracefulExit(options = { stallThreshold: REGULAR_STALL_THRESHOLD,
   closeCustomServers();
   closeNativeServers();
 
-  const now = Date.now();
+  const startedAt = Date.now();
 
   const lastState = {
     tasks: -1,
@@ -170,8 +188,8 @@ async function gracefulExit(options = { stallThreshold: REGULAR_STALL_THRESHOLD,
     nativeServers: -1,
     clients: -1,
     sockets: -1,
-    started: now,
-    updated: now
+    started: startedAt,
+    updated: startedAt
   };
 
   // noinspection InfiniteLoopJS
@@ -186,7 +204,13 @@ async function gracefulExit(options = { stallThreshold: REGULAR_STALL_THRESHOLD,
       closeClients();
     }
 
-    if (currentTasks === 0 && currentBytes === 0 && customServers.size === 0 && nativeServers.size === 0 && clients.size === 0) {
+    if (
+      currentTasks === 0 &&
+      currentBytes === 0 &&
+      customServers.size === 0 &&
+      nativeServers.size === 0 &&
+      clients.size === 0
+    ) {
       console.log('[UniversalExit] All buffers, tasks, servers and clients cleared successfully. Exiting cleanly.');
       await setImmediate();
       process.exit(options.exitCode);
@@ -199,7 +223,7 @@ async function gracefulExit(options = { stallThreshold: REGULAR_STALL_THRESHOLD,
       nativeServers.size < lastState.nativeServers ||
       clients.size < lastState.clients ||
       activeSockets.size < lastState.sockets;
-    const now = Date.now();
+    const updatedAt = Date.now();
 
     if (progressMade || lastState.tasks === -1) {
       lastState.tasks = currentTasks;
@@ -208,9 +232,9 @@ async function gracefulExit(options = { stallThreshold: REGULAR_STALL_THRESHOLD,
       lastState.nativeServers = nativeServers.size;
       lastState.clients = clients.size;
       lastState.sockets = activeSockets.size;
-      lastState.updated = now;
+      lastState.updated = updatedAt;
     } else {
-      const stalledDuration = now - lastState.updated;
+      const stalledDuration = updatedAt - lastState.updated;
 
       if (stalledDuration >= options.stallThreshold) {
         console.error(
@@ -223,7 +247,7 @@ async function gracefulExit(options = { stallThreshold: REGULAR_STALL_THRESHOLD,
     }
 
     console.log(
-      `[UniversalExit] Scheduling next check #${Math.round((now - lastState.started) / CHECK_PROGRESS_INTERVAL)}. Sockets left: ${activeSockets.size}`
+      `[UniversalExit] Scheduling next check #${Math.round((updatedAt - lastState.started) / CHECK_PROGRESS_INTERVAL)}. Sockets left: ${activeSockets.size}`
     );
     await setTimeout(CHECK_PROGRESS_INTERVAL);
   }
@@ -246,7 +270,7 @@ if (process.env.NODE_ENV !== 'test') {
     process.on(signal, () => {
       if (shuttingDown) return;
       console.log(`[UniversalExit] Received OS signal: ${signal}`);
-      gracefulExit({ stallThreshold: REGULAR_STALL_THRESHOLD, exitCode: 0 });
+      void gracefulExit({ stallThreshold: REGULAR_STALL_THRESHOLD, exitCode: 0 });
     });
   }
 
@@ -254,18 +278,18 @@ if (process.env.NODE_ENV !== 'test') {
   // Shorter timeout ensures unstable processes don't hang in memory for too long
   process.on('unhandledRejection', reason => {
     console.error('[UniversalExit] Critical Unhandled Rejection:', reason);
-    gracefulExit({ stallThreshold: EMERGENCY_STALL_THRESHOLD, exitCode: 1 });
+    void gracefulExit({ stallThreshold: EMERGENCY_STALL_THRESHOLD, exitCode: 1 });
   });
 
   process.on('uncaughtException', err => {
     console.error('[UniversalExit] Critical Uncaught Exception:', err);
-    gracefulExit({ stallThreshold: EMERGENCY_STALL_THRESHOLD, exitCode: 1 });
+    void gracefulExit({ stallThreshold: EMERGENCY_STALL_THRESHOLD, exitCode: 1 });
   });
 
   // Listen for custom event on the global process event emitter
   process.on('gracefulExit', (code = 0) => {
     console.log(`[UniversalExit] Programmatic graceful exit triggered with code ${code}`);
-    gracefulExit({ stallThreshold: REGULAR_STALL_THRESHOLD, exitCode: code });
+    void gracefulExit({ stallThreshold: REGULAR_STALL_THRESHOLD, exitCode: code });
   });
 }
 

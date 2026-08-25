@@ -33,7 +33,10 @@ export interface CustomServer {
  */
 export function trackServer(server: CustomServer): void;
 
-export type TrackableClient = { quit: Function } | { close: Function } | { end: Function } | { disconnect: Function };
+type CloseableMethod = (...args: any[]) => any;
+
+export type TrackableClient =
+  { quit: CloseableMethod } | { close: CloseableMethod } | { end: CloseableMethod } | { disconnect: CloseableMethod };
 
 /**
  * Registers an outbound client (ioredis, amqplib, pg, ...).

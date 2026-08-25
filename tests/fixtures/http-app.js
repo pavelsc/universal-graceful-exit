@@ -16,33 +16,89 @@
  *
  * Lifecycle:
  *   1. Import the library first (signal hooks + tracing:net.server.listen).
- *   2. Bind a native HTTP server — asyncEnd adds it to coreServers
+ *   2. Bind a native HTTP server — asyncEnd adds it to nativeServers
  *      and the listening handle keeps the event loop alive (no setInterval).
- *   3. Register a mock outbound client via trackClient().
+ *   3. Register mock + delayed outbound clients via trackClient().
  *   4. Idle until SIGINT (or a Windows IPC stand-in) starts gracefulExit().
+ *   5. A second SIGINT listener trackClient()s a late client after
+ *      clients.closing is already true.
  */
 
 // Documented usage: first require so the tracing subscriber is in place
 // before listen() publishes tracing:net.server.listen.
 const { trackClient } = require('../../index.js');
 const http = require('node:http');
+const { setTimeout } = require('node:timers/promises');
+
+const DELAYED_CLIENT_CLOSE_MS = 250;
 
 /**
  * Stand-in for an outbound I/O client (ioredis, amqplib, pg, ...).
  * A `close()` method is enough for trackClient() to accept it; gracefulExit
  * will invoke that method once in-flight tasks drain to zero.
  */
-const mockClient = {
+
+const mockClientWithAllMethods = {
+  quit() {
+    console.log('[Fixture] Mock outbound client closed via quit');
+    return Promise.reject('UNKNOWN');
+  },
   close() {
-    console.log('[Fixture] Mock outbound client closed');
+    console.log('[Fixture] Mock outbound client closed via close');
+  },
+  end() {
+    console.log('[Fixture] Mock outbound client closed via end');
+  },
+  disconnect() {
+    console.log('[Fixture] Mock outbound client closed via disconnect');
   }
 };
 
-trackClient(mockClient);
+trackClient(mockClientWithAllMethods);
+
+const mockClientWithCloseMethod = {
+  close() {
+    console.log('[Fixture] Mock outbound client closed with close');
+  }
+};
+
+trackClient(mockClientWithCloseMethod);
+
+/**
+ * Promise-based client whose close takes ~150ms. Registered before SIGINT so
+ * closeClients() keeps clients.size > 0 until the timer fires — shutdown must
+ * wait for the handshake, not just the method call.
+ */
+const delayedClient = {
+  async end() {
+    await setTimeout(DELAYED_CLIENT_CLOSE_MS);
+    console.log('[Fixture] Delayed outbound client closed via end');
+  }
+};
+
+trackClient(delayedClient);
+
+/**
+ * Registered from our SIGINT listener, which runs after the library's.
+ * By then closeClients() has set clients.closing, so this hits the late
+ * trackClient path (void closeClient) instead of being inserted into the map.
+ * Same 150ms delay: the boot-tracked delayed client keeps the process alive
+ * long enough for this close to finish and log.
+ */
+const lateClient = {
+  async disconnect() {
+    await setTimeout(DELAYED_CLIENT_CLOSE_MS);
+    console.log('[Fixture] Late outbound client closed via disconnect');
+  }
+};
+
+process.on('SIGINT', () => {
+  trackClient(lateClient);
+});
 
 /**
  * Native http.Server. listen() publishes `net.server.listen`, so the library
- * adds it to coreServers and will call server.close() on shutdown.
+ * adds it to nativeServers and will call server.close() on shutdown.
  *
  * Do not add a setInterval heartbeat to "keep the process alive": a live
  * timer can delay process.exit() and inflate measured shutdown latency.

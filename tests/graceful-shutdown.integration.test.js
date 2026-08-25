@@ -26,6 +26,9 @@ const IS_LOUD = process.env.LOUD_TESTS === 'true';
 /** Production shutdown of an idle HTTP app must beat this budget. */
 const SHUTDOWN_LATENCY_BUDGET_MS = 1000;
 
+/** Fixture delayedClient / lateClient close() wait. Shutdown must outlast this. */
+const DELAYED_CLIENT_CLOSE_MS = 150;
+
 /**
  * Upper bound for waitForChildExit. Larger than the latency budget so a
  * hung child fails with our error (and a SIGKILL) instead of Jest's generic
@@ -151,7 +154,11 @@ function waitForChildExit(child) {
       if (!child.killed) {
         child.kill('SIGKILL');
       }
-      finish(new Error(`Child did not exit within ${CHILD_EXIT_TIMEOUT_MS}ms (possible hang).\nstdout:\n${stdout}\nstderr:\n${stderr}`));
+      finish(
+        new Error(
+          `Child did not exit within ${CHILD_EXIT_TIMEOUT_MS}ms (possible hang).\nstdout:\n${stdout}\nstderr:\n${stderr}`
+        )
+      );
     }, CHILD_EXIT_TIMEOUT_MS);
 
     child.once('exit', onExit);
@@ -251,18 +258,35 @@ describe('graceful shutdown via child process', () => {
     // 2. Drain finished; this is the last line the library prints before exit.
     expect(output).toContain('Exiting cleanly.');
 
-    // 3. Checking that close method was found
+    // 3. Checking that close method was found (sync mock + delayed + late).
     expect(output).toContain('[Fixture] Mock outbound client closed');
+    expect(output).toContain('[Fixture] Delayed outbound client closed');
+    expect(output).toContain('[Fixture] Late outbound client closed');
+
+    // Boot-tracked clients are inserted; the SIGINT-time client is not
+    // (clients.closing is already true — void closeClient, no "Adding" log).
+    expect(output.match(/\[UniversalExit\] Adding client with method/g)).toHaveLength(3);
+    expect(output.match(/\[UniversalExit\] Closing client via quit/g)).toHaveLength(1);
+    expect(output.match(/\[UniversalExit\] Closing client via close/g)).toHaveLength(1);
+    expect(output.match(/\[UniversalExit\] Closing client via end/g)).toHaveLength(1);
+    expect(output.match(/\[UniversalExit\] Closing client via disconnect/g)).toHaveLength(1);
+    expect(output.match(/\[UniversalExit\] Error closing client via quit: UNKNOWN/g)).toHaveLength(1);
 
     const initiatedAt = output.indexOf('[UniversalExit] Clean shutdown initiated.');
+    const delayedClosedAt = output.indexOf('[Fixture] Delayed outbound client closed');
+    const lateClosedAt = output.indexOf('[Fixture] Late outbound client closed');
     const exitingAt = output.indexOf('Exiting cleanly.');
-    expect(exitingAt).toBeGreaterThan(initiatedAt);
+    expect(delayedClosedAt).toBeGreaterThan(initiatedAt);
+    expect(lateClosedAt).toBeGreaterThan(initiatedAt);
+    expect(exitingAt).toBeGreaterThan(delayedClosedAt);
+    expect(exitingAt).toBeGreaterThan(lateClosedAt);
 
     // 3. Successful teardown — not an emergency force-exit (code 1).
     expect(signal).toBeNull();
     expect(code).toBe(0);
 
-    // 4. An idle app must not sit on the 3s stall watchdog or Jest's timeout.
+    // 4. Must wait for the 150ms close handshake, but not the 3s stall watchdog.
+    expect(shutdownLatencyMs).toBeGreaterThanOrEqual(DELAYED_CLIENT_CLOSE_MS);
     expect(shutdownLatencyMs).toBeLessThan(SHUTDOWN_LATENCY_BUDGET_MS);
   });
 });
