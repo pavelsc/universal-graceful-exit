@@ -252,7 +252,7 @@ describe('graceful shutdown via child process', () => {
     const output = `${stdout}${stderr}`;
 
     // 1. Library acknowledged the start of a clean drain and saw the HTTP server.
-    expect(output).toContain('[UniversalExit] Clean shutdown initiated.');
+    expect(output).toContain('Clean shutdown initiated.');
     expect(output).toMatch(/Native Servers: [1-9]\d*/);
 
     // 2. Drain finished; this is the last line the library prints before exit.
@@ -265,14 +265,14 @@ describe('graceful shutdown via child process', () => {
 
     // Boot-tracked clients are inserted; the SIGINT-time client is not
     // (clients.closing is already true — void closeClient, no "Adding" log).
-    expect(output.match(/\[UniversalExit\] Adding client with method/g)).toHaveLength(3);
-    expect(output.match(/\[UniversalExit\] Closing client via quit/g)).toHaveLength(1);
-    expect(output.match(/\[UniversalExit\] Closing client via close/g)).toHaveLength(1);
-    expect(output.match(/\[UniversalExit\] Closing client via end/g)).toHaveLength(1);
-    expect(output.match(/\[UniversalExit\] Closing client via disconnect/g)).toHaveLength(1);
-    expect(output.match(/\[UniversalExit\] Error closing client via quit: UNKNOWN/g)).toHaveLength(1);
+    expect(output.match(/Adding client with method/g) || []).toHaveLength(3);
+    expect(output.match(/Closing client via quit/g) || []).toHaveLength(1);
+    expect(output.match(/Closing client via close/g) || []).toHaveLength(1);
+    expect(output.match(/Closing client via end/g) || []).toHaveLength(1);
+    expect(output.match(/Closing client via disconnect/g) || []).toHaveLength(1);
+    expect(output.match(/Error closing client via quit:/g) || []).toHaveLength(1);
 
-    const initiatedAt = output.indexOf('[UniversalExit] Clean shutdown initiated.');
+    const initiatedAt = output.indexOf('Clean shutdown initiated.');
     const delayedClosedAt = output.indexOf('[Fixture] Delayed outbound client closed');
     const lateClosedAt = output.indexOf('[Fixture] Late outbound client closed');
     const exitingAt = output.indexOf('Exiting cleanly.');

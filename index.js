@@ -1,5 +1,7 @@
 const diagnostics_channel = require('node:diagnostics_channel');
 const { setImmediate, setTimeout } = require('node:timers/promises');
+const { createLogger } = require('./src/logging');
+const logger = createLogger('UniversalExit');
 
 const REGULAR_STALL_THRESHOLD = 3000;
 const EMERGENCY_STALL_THRESHOLD = 1500;
@@ -26,7 +28,7 @@ diagnostics_channel.tracingChannel('net.server.listen').subscribe({
     if (nativeServers.has(server)) return;
     nativeServers.add(server);
     server.once('close', () => {
-      console.log('[UniversalExit] Native server close event');
+      logger.debug('Native server close event');
       nativeServers.delete(server);
     });
   }
@@ -38,11 +40,11 @@ diagnostics_channel.channel('net.client.socket').subscribe(({ socket }) => {
 
     socket.once('close', () => {
       activeSockets.delete(socket);
-      console.log(`[UniversalExit] Socket CLOSED. Left in set: ${activeSockets.size}`);
+      logger.debug('Socket CLOSED. Left in set: %d', activeSockets.size);
     });
 
     socket.on('error', err => {
-      console.log(`[UniversalExit] Socket encountered error: ${err.message}`);
+      logger.warn('Socket encountered error: %s', err.message);
     });
   }
 });
@@ -82,7 +84,7 @@ function trackServer(server) {
   customServers.add(server);
 
   const cleanup = () => {
-    console.log('[UniversalExit] Custom server close event');
+    logger.debug('Custom server close event');
     customServers.delete(server);
   };
   if (typeof server.once === 'function') {
@@ -103,13 +105,13 @@ function trackClient(client) {
     return;
   }
 
-  console.log(`[UniversalExit] Adding client with method ${method}`);
+  logger.debug('Adding client with method %s', method);
   clients.set(client, method);
 }
 
 function untrackClient(client) {
   if (!client || !clients.has(client)) return;
-  console.log(`[UniversalExit] Removing client manually`);
+  logger.debug('Removing client manually');
   clients.delete(client);
 }
 
@@ -117,14 +119,14 @@ function closeCustomServers() {
   for (const server of customServers) {
     try {
       if (server.clients) {
-        console.log('[UniversalExit] Custom server clients:', server.clients.size);
+        logger.debug('Custom server clients: %d', server.clients.size);
         for (const client of server.clients) {
           client.terminate();
         }
       }
       server.close();
     } catch (err) {
-      console.error('[UniversalExit] Error closing custom server:', err);
+      logger.error('Error closing custom server: %o', err);
     }
   }
 }
@@ -134,7 +136,7 @@ function closeNativeServers() {
     try {
       server.close();
     } catch (err) {
-      console.error('[UniversalExit] Error closing native server:', err);
+      logger.error('Error closing native server: %o', err);
     }
   }
 }
@@ -149,15 +151,15 @@ function closeClients() {
       await closeClient(client, method);
       clients.delete(client);
     })
-  ).finally(() => console.log('[UniversalExit] Client close attempts finished'));
+  ).finally(() => logger.debug('Client close attempts finished'));
 }
 
 async function closeClient(client, method) {
   try {
-    console.log(`[UniversalExit] Closing client via ${method}...`);
+    logger.debug('Closing client via %s...', method);
     await client[method]();
   } catch (err) {
-    console.error(`[UniversalExit] Error closing client via ${method}:`, err);
+    logger.error('Error closing client via %s: %o', method, err);
   }
 }
 
@@ -172,8 +174,11 @@ async function gracefulExit(options = { stallThreshold: REGULAR_STALL_THRESHOLD,
   if (shuttingDown && options.exitCode === 0) return;
   shuttingDown = true;
 
-  console.log(
-    `[UniversalExit] Clean shutdown initiated. Custom Servers: ${customServers.size}, Native Servers: ${nativeServers.size}, Sockets: ${activeSockets.size}`
+  logger.info(
+    'Clean shutdown initiated. Custom Servers: %d, Native Servers: %d, Sockets: %d',
+    customServers.size,
+    nativeServers.size,
+    activeSockets.size
   );
 
   closeCustomServers();
@@ -197,8 +202,13 @@ async function gracefulExit(options = { stallThreshold: REGULAR_STALL_THRESHOLD,
     const currentBytes = getCurrentBytes();
     const currentTasks = activeTasksCount;
 
-    console.log(
-      `[UniversalExit] currentTasks: ${currentTasks}, currentBytes: ${currentBytes}, customServers: ${customServers.size}, nativeServers: ${nativeServers.size}, clients: ${clients.size}`
+    logger.debug(
+      'currentTasks: %d, currentBytes: %d, customServers: %d, nativeServers: %d, clients: %d',
+      currentTasks,
+      currentBytes,
+      customServers.size,
+      nativeServers.size,
+      clients.size
     );
     if (currentTasks === 0) {
       closeClients();
@@ -211,7 +221,7 @@ async function gracefulExit(options = { stallThreshold: REGULAR_STALL_THRESHOLD,
       nativeServers.size === 0 &&
       clients.size === 0
     ) {
-      console.log('[UniversalExit] All buffers, tasks, servers and clients cleared successfully. Exiting cleanly.');
+      logger.info('All buffers, tasks, servers and clients cleared successfully. Exiting cleanly.');
       await setImmediate();
       process.exit(options.exitCode);
     }
@@ -237,8 +247,11 @@ async function gracefulExit(options = { stallThreshold: REGULAR_STALL_THRESHOLD,
       const stalledDuration = updatedAt - lastState.updated;
 
       if (stalledDuration >= options.stallThreshold) {
-        console.error(
-          `[UniversalExit] EMERGENCY: No progress detected for ${options.stallThreshold}ms (Tasks: ${currentTasks}, Pending Bytes: ${currentBytes}). Forcing exit.`
+        logger.error(
+          'EMERGENCY: No progress detected for %dms (Tasks: %d, Pending Bytes: %d). Forcing exit.',
+          options.stallThreshold,
+          currentTasks,
+          currentBytes
         );
         closeClients();
         await setImmediate();
@@ -246,8 +259,10 @@ async function gracefulExit(options = { stallThreshold: REGULAR_STALL_THRESHOLD,
       }
     }
 
-    console.log(
-      `[UniversalExit] Scheduling next check #${Math.round((updatedAt - lastState.started) / CHECK_PROGRESS_INTERVAL)}. Sockets left: ${activeSockets.size}`
+    logger.debug(
+      'Scheduling next check #%d. Sockets left: %d',
+      Math.round((updatedAt - lastState.started) / CHECK_PROGRESS_INTERVAL),
+      activeSockets.size
     );
     await setTimeout(CHECK_PROGRESS_INTERVAL);
   }
@@ -269,7 +284,7 @@ if (process.env.NODE_ENV !== 'test') {
      */
     process.on(signal, () => {
       if (shuttingDown) return;
-      console.log(`[UniversalExit] Received OS signal: ${signal}`);
+      logger.info('Received OS signal: %s', signal);
       void gracefulExit({ stallThreshold: REGULAR_STALL_THRESHOLD, exitCode: 0 });
     });
   }
@@ -277,18 +292,18 @@ if (process.env.NODE_ENV !== 'test') {
   // Intercept unhandled exceptions and crashes
   // Shorter timeout ensures unstable processes don't hang in memory for too long
   process.on('unhandledRejection', reason => {
-    console.error('[UniversalExit] Critical Unhandled Rejection:', reason);
+    logger.error('Critical Unhandled Rejection: %o', reason);
     void gracefulExit({ stallThreshold: EMERGENCY_STALL_THRESHOLD, exitCode: 1 });
   });
 
   process.on('uncaughtException', err => {
-    console.error('[UniversalExit] Critical Uncaught Exception:', err);
+    logger.error('Critical Uncaught Exception: %o', err);
     void gracefulExit({ stallThreshold: EMERGENCY_STALL_THRESHOLD, exitCode: 1 });
   });
 
   // Listen for custom event on the global process event emitter
   process.on('gracefulExit', (code = 0) => {
-    console.log(`[UniversalExit] Programmatic graceful exit triggered with code ${code}`);
+    logger.info('Programmatic graceful exit triggered with code %d', code);
     void gracefulExit({ stallThreshold: REGULAR_STALL_THRESHOLD, exitCode: code });
   });
 }
