@@ -54,6 +54,28 @@ The same pattern applies to a pool or request-scoped client you drain yourself (
 npm install universal-graceful-exit
 ```
 
+## Configure shutdown
+
+The defaults work without any configuration. To customize shutdown timing, call `configureShutdown` once during application startup, before accepting work:
+
+```javascript
+import { configureShutdown } from 'universal-graceful-exit';
+
+configureShutdown({
+  regularStallThreshold: 5000,
+  emergencyStallThreshold: 2000,
+  checkProgressInterval: 50
+});
+```
+
+All values are integer milliseconds, and every property is optional as long as you provide at least one:
+
+- `regularStallThreshold`: time without shutdown progress before a forced exit after an OS signal or `process.emit('gracefulExit', 0)`. Defaults to `3000`; range `1000`–`30000`.
+- `emergencyStallThreshold`: time without shutdown progress before a forced exit after an unhandled rejection, uncaught exception, or non-zero `gracefulExit` code. Defaults to `1500`; range `1000`–`30000`.
+- `checkProgressInterval`: interval between shutdown progress checks. Defaults to `100`; range `10`–`500`.
+
+The stall thresholds measure continuous time **without progress**, not total shutdown duration. Invalid input and a second call to `configureShutdown` throw synchronously.
+
 ## Usage
 
 Import the package as **the very first line** of your application:

@@ -1,11 +1,9 @@
 const diagnostics_channel = require('node:diagnostics_channel');
 const { setImmediate, setTimeout } = require('node:timers/promises');
 const { createLogger } = require('./src/logging');
-const logger = createLogger('UniversalExit');
+const { ShutdownOptions } = require('./src/shutdown-options');
 
-const REGULAR_STALL_THRESHOLD = 3000;
-const EMERGENCY_STALL_THRESHOLD = 1500;
-const CHECK_PROGRESS_INTERVAL = 100;
+const logger = createLogger('UniversalExit');
 
 const activeSockets = new Set();
 const nativeServers = new Set(); // Native HTTP/TCP servers via tracing:net.server.listen
@@ -13,6 +11,7 @@ const customServers = new Set(); // Custom servers (WS, SSE etc), mostly EventEm
 class Clients extends Map {
   closing = false;
 }
+
 /**
  * Regular clients like ioredis or custom wrappers, guarded via TrackableClient
  * @type {Clients<object, string>}
@@ -52,6 +51,10 @@ diagnostics_channel.channel('net.client.socket').subscribe(({ socket }) => {
 // Internal application lifecycle state
 let shuttingDown = false;
 let activeTasksCount = 0;
+
+function configureShutdown(options) {
+  ShutdownOptions.configure(options);
+}
 
 /**
  * Returns true if the process is currently shutting down
@@ -169,7 +172,7 @@ async function closeClient(client, method) {
  * @param {number} options.stallThreshold - Max wait time for buffer flush in ms
  * @param {number} options.exitCode - Process exit code (0 for success, 1 for error)
  */
-async function gracefulExit(options = { stallThreshold: REGULAR_STALL_THRESHOLD, exitCode: 0 }) {
+async function gracefulExit(options = { stallThreshold: ShutdownOptions.regularStallThreshold, exitCode: 0 }) {
   // Prevent overriding critical errors if already shutting down cleanly
   if (shuttingDown && options.exitCode === 0) return;
   shuttingDown = true;
@@ -261,10 +264,10 @@ async function gracefulExit(options = { stallThreshold: REGULAR_STALL_THRESHOLD,
 
     logger.debug(
       'Scheduling next check #%d. Sockets left: %d',
-      Math.round((updatedAt - lastState.started) / CHECK_PROGRESS_INTERVAL),
+      Math.round((updatedAt - lastState.started) / ShutdownOptions.checkProgressInterval),
       activeSockets.size
     );
-    await setTimeout(CHECK_PROGRESS_INTERVAL);
+    await setTimeout(ShutdownOptions.checkProgressInterval);
   }
 }
 
@@ -285,7 +288,7 @@ if (process.env.NODE_ENV !== 'test') {
     process.on(signal, () => {
       if (shuttingDown) return;
       logger.info('Received OS signal: %s', signal);
-      void gracefulExit({ stallThreshold: REGULAR_STALL_THRESHOLD, exitCode: 0 });
+      void gracefulExit({ stallThreshold: ShutdownOptions.regularStallThreshold, exitCode: 0 });
     });
   }
 
@@ -293,22 +296,27 @@ if (process.env.NODE_ENV !== 'test') {
   // Shorter timeout ensures unstable processes don't hang in memory for too long
   process.on('unhandledRejection', reason => {
     logger.error('Critical Unhandled Rejection: %o', reason);
-    void gracefulExit({ stallThreshold: EMERGENCY_STALL_THRESHOLD, exitCode: 1 });
+    void gracefulExit({ stallThreshold: ShutdownOptions.emergencyStallThreshold, exitCode: 1 });
   });
 
   process.on('uncaughtException', err => {
     logger.error('Critical Uncaught Exception: %o', err);
-    void gracefulExit({ stallThreshold: EMERGENCY_STALL_THRESHOLD, exitCode: 1 });
+    void gracefulExit({ stallThreshold: ShutdownOptions.emergencyStallThreshold, exitCode: 1 });
   });
 
-  // Listen for custom event on the global process event emitter
+  // Listen for custom event on the global process event emitter.
+  // code 0 uses the regular stall budget; any other code uses the emergency one.
   process.on('gracefulExit', (code = 0) => {
     logger.info('Programmatic graceful exit triggered with code %d', code);
-    void gracefulExit({ stallThreshold: REGULAR_STALL_THRESHOLD, exitCode: code });
+    void gracefulExit({
+      stallThreshold: code ? ShutdownOptions.emergencyStallThreshold : ShutdownOptions.regularStallThreshold,
+      exitCode: code
+    });
   });
 }
 
 module.exports = {
+  configureShutdown,
   isStopped,
   startTask,
   endTask,

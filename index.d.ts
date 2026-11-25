@@ -19,6 +19,39 @@ export function startTask(): number;
  */
 export function endTask(): number;
 
+interface ShutdownConfigurationOptions {
+  /**
+   * Shutdown stall threshold for regular exits (signals and `gracefulExit` with code `0`).
+   * Must be an integer in range [1000, 30000]. Defaults to 3000.
+   */
+  regularStallThreshold?: number;
+
+  /**
+   * Shutdown stall threshold for crash exits (`unhandledRejection`, `uncaughtException`,
+   * and `gracefulExit` with a non-zero code).
+   * Must be an integer in range [1000, 30000]. Defaults to 1500.
+   */
+  emergencyStallThreshold?: number;
+
+  /**
+   * Interval between shutdown progress checks in milliseconds.
+   * Must be an integer in range [10, 500]. Defaults to 100.
+   */
+  checkProgressInterval?: number;
+}
+
+export type ShutdownConfiguration = {
+  [Key in keyof ShutdownConfigurationOptions]-?: Required<Pick<ShutdownConfigurationOptions, Key>> &
+    Partial<Omit<ShutdownConfigurationOptions, Key>>;
+}[keyof ShutdownConfigurationOptions];
+
+/**
+ * Configures one or more shutdown thresholds.
+ * Call this exactly once during application bootstrap, before shutdown starts.
+ * Throws on an empty object, invalid values, or a subsequent call.
+ */
+export function configureShutdown(options: ShutdownConfiguration): void;
+
 export interface CustomServer {
   close(callback?: (err?: Error) => void): any;
 
